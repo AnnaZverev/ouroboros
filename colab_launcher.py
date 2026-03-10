@@ -550,7 +550,7 @@ while True:
             send_with_budget(chat_id, "✅ Owner registered. Ouroboros online.")
             continue
 
-        if user_id != int(st.get("owner_id")):
+        if user_id not in st.get("allowed_users", [int(st.get("owner_id", 0))]):
             continue
 
         log_chat("in", chat_id, user_id, text)
@@ -617,7 +617,7 @@ while True:
                     _uid2 = (_msg2.get("from") or {}).get("id")
                     _cid2 = (_msg2.get("chat") or {}).get("id")
                     _txt2 = _msg2.get("text") or _msg2.get("caption") or ""
-                    if _uid2 and _batch_state.get("owner_id") and _uid2 == int(_batch_state["owner_id"]):
+                    if _uid2 and _uid2 in _batch_state.get("allowed_users", [int(_batch_state.get("owner_id", 0))]):
                         log_chat("in", _cid2, _uid2, _txt2)
                         _batch_state["last_owner_message_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                         _batch_state_dirty = True
