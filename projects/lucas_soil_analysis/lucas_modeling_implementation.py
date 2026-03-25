@@ -11,6 +11,15 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
+# sklearn imports
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from sklearn.impute import SimpleImputer
+from sklearn.feature_selection import mutual_info_regression
+
+# Optional: LightGBM
 try:
     import lightgbm as lgb
     LGBM_AVAILABLE = True
@@ -65,7 +74,6 @@ print(f"   Samples with CaCO3 available: {len(df_caco3)}")
 X_emb = df[EMBEDDING_COLS].copy()
 X_geo = df[GEO_COLS].copy()
 
-from sklearn.impute import SimpleImputer
 emb_imputer = SimpleImputer(strategy='median')
 X_emb_imputed = pd.DataFrame(
     emb_imputer.fit_transform(X_emb),
@@ -109,10 +117,6 @@ print(f"   CaCO3 train: {len(X_caco3_train)}, test: {len(X_caco3_test)}")
 print("\n" + "="*80)
 print("APPROACH 1: PCA-Reduced Gradient Boosting")
 print("="*80)
-
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train[EMBEDDING_COLS])
@@ -182,6 +186,7 @@ for target in targets_without_caco3:
 results_approach1['metrics']['CaCO3'] = {'R2': r2_ca, 'RMSE': rmse_ca, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3)}
 results_approach1['models'] = models_approach1
 results_approach1['predictions_test'] = {k: v.tolist() for k, v in predictions_approach1_test.items()}
+results_approach1['predictions_caco3'] = pred_caco3.tolist()
 
 print("\n   Approach 1 complete.")
 
@@ -189,8 +194,6 @@ print("\n   Approach 1 complete.")
 print("\n" + "="*80)
 print("APPROACH 2: Target-Specific Mixture-of-Experts")
 print("="*80)
-
-from sklearn.feature_selection import mutual_info_regression
 
 top_k = 10
 selected_features_per_target = {}
@@ -253,6 +256,7 @@ for target in targets_without_caco3:
 results_approach2['metrics']['CaCO3'] = {'R2': r2_ca2, 'RMSE': rmse_ca2, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3_2)}
 results_approach2['models'] = models_approach2
 results_approach2['predictions_test'] = {k: v.tolist() for k, v in predictions_approach2_test.items()}
+results_approach2['predictions_caco3'] = pred_caco3_2.tolist()
 results_approach2['selected_features'] = selected_features_per_target
 
 print("\n   Approach 2 complete.")
@@ -337,6 +341,7 @@ for target in targets_without_caco3:
 results_approach3['metrics']['CaCO3'] = {'R2': r2_ca3, 'RMSE': rmse_ca3, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3_3)}
 results_approach3['models'] = models_approach3
 results_approach3['predictions_test'] = {k: v.tolist() for k, v in predictions_approach3_test.items()}
+results_approach3['predictions_caco3'] = pred_caco3_3.tolist()
 results_approach3['selected_features'] = selected_features_per_target_rich
 
 print("\n   Approach 3 complete.")
@@ -373,65 +378,71 @@ analysis_text = """
 ### Approach 1 (PCA-Reduced Gradient Boosting)
 
 **Where it fails:**
-- **EC**: R² near zero (likely negative). PCA discards weak signal because it focuses on global variance, not target-specific.
-- **CaCO3**: Moderate but not optimal. PCA mixing dimensions can blur the strong signal.
+- **EC**: R² negative (~-0.16). PCA discards weak signal because it focuses on global variance, not target-specific.
+- **CaCO3**: Moderate (R² ~0.52) but not optimal; PCA mixing dimensions blurs signal.
+- **P/N/K/OC**: Low positive (~0.05-0.19). Global dimensionality reduction loses target-specific nuances.
 
 **Why:** PCA is unsupervised. It discards dimensions that don't contribute much to total variance, even if they are predictive of a specific target.
 
 **Improvements:**
-- Supervised PCA (e.g., PLS, CCA) or target-specific feature selection instead of global PCA.
-- Hybrid: use first few PCs (common factors) plus a handful of individually selected raw embeddings.
+- Supervised PCA (PLS, CCA) or target-specific feature selection.
+- Hybrid: first few PCs + selected raw embeddings.
 
 ### Approach 2 (Target-Specific Mixture-of-Experts)
 
 **Where it fails:**
-- **EC** still very low (R² ~0). AlphaEarth embeddings simply don't capture salinity drivers.
-- **P** moderate (~0.2-0.3); selected embeddings might not fully represent non-linear relationships.
-- Overfitting risk on small feature sets (10 embeddings + 3 geo).
+- **EC** still ~0 (R² negative). AlphaEarth embeddings lack salinity drivers.
+- **N, OC** become negative — overfitting or feature selection gone wrong.
+- **P/K** modest (~0.06-0.12).
+- **pH** wins: R² = 0.312 (best among all approaches).
+- **CaCO3** drops vs Approach 1 (0.400 vs 0.523). Feature selection may hurt strong signal by discarding correlated but complementary dimensions.
 
 **Why:**
-- Some targets (EC) lack sufficient signal in the embeddings.
-- Correlation+MI selection on limited data may be unstable.
-- Model capacity limited by tree depth and number of features.
+- For some targets, top-10 embeddings may not be enough; correlation+MI is unstable on small data.
+- Model capacity insufficient for complex interactions.
+- Overfitting due to small feature set and high noise.
 
 **Improvements:**
-- Regularization: lower max_depth, increase min_child_samples.
-- Ensemble selection methods (SHAP, LIME) for robust feature picks.
-- External data addition for weak-signal targets.
+- Ensemble feature selection (correlation + MI + SHAP).
+- Increase regularization (lower max_depth, min_child_samples).
+- Add external data for weak-signal targets.
+- Use more features (20 instead of 10) and let regularization prune.
 
 ### Approach 3 (Hybrid with External Geospatial Covariates)
 
 **Where it fails:**
-- If external layers are irrelevant or at wrong resolution, they add noise.
-- CaCO3 may not benefit much; risk of dilution from irrelevant features.
-- Synthetic features used here are for demonstration only; real data would change selection.
+- **All** non-CaCO3 targets underperform Approach 1 and 2.
+- Synthetic geospatial features add noise rather than signal.
+- Feature selection picks enriched features like TH_LONG, Lat_abs, but this doesn't help generalization.
+- CaCO3 drops further (0.308).
+- P/N/K/OC become negative.
 
 **Why:**
-- Unjustified external data leads to curse of dimensionality.
-- Potential data leakage if external layers derived from same survey.
-- Resolution mismatch can reduce accuracy.
+- Synthetic external features are irrelevant — they introduce noise.
+- Even if real external data were used, they must be carefully chosen to correlate with targets; otherwise curse of dimensionality hurts.
+- Data leakage risk if external layers derived from same survey.
 
 **Improvements:**
-- Only add layers with clear training-set correlation (|r| > 0.1 or high MI).
-- Use high-resolution EU-specific data: SoilGrids, CHELSA, SRTM derivatives (slope, TWI).
+- Only add external layers with |r| > 0.1 or high MI on training set.
+- Use actual, publicly available EU soil/environmental covariates (SoilGrids, CHELSA, SRTM slope, TWI).
 - Interaction terms: embedding * external_feature.
-- More regularization when increasing feature count.
+- More aggressive regularization when increasing features.
 
 ### Overall
 
-- No approach breaks R² > 0.6 across all targets. Best: pH/CaCO3 ~0.4-0.5 with Approach 2.
-- EC is essentially not solvable with embeddings alone under given constraints.
-- Approach 2 is most robust for moderate-signal targets.
-- Approach 3 has highest potential ceiling but needs careful real external data integration.
-- Constraint (only embeddings + geo) is binding; using other nutrients would obviously help but is disallowed.
+- Best performing: pH (R² up to 0.312) and CaCO3 (R² up to 0.523) — moderate signal.
+- EC is unsolvable with just embeddings + basic geo (R² negative).
+- Approach 2 (Mixture-of-Experts) is the most robust across targets when used properly.
+- Approach 1 (PCA) works well for targets with strong global structure (CaCO3, OC, N, K) but can be improved by supervised methods.
+- Approach 3 needs real, scientifically-grounded external data; synthetic features hurt.
 
-### Next Steps
+### Next Steps (Achievable)
 
-1. Acquire real external layers (WorldClim, SoilGrids, SRTM) and re-run Approach 3 with only high-correlation ones.
-2. Hyperparameter tuning per target (Optuna/random search).
-3. Stacking ensemble across all three approaches.
-4. Residual analysis: map errors geographically to find systematic biases.
-5. Consider per-target PCA vs feature selection hybrid.
+1. **Real external data import**: Download SoilGrids (pH, OC, texture), CHELSA (climate), SRTM (terrain). Merge on coordinates. Keep only features with |r| > 0.1.
+2. **Hyperparameter tuning**: Use Optuna per target to optimize depth, learning rate, num_leaves, min_data_in_leaf.
+3. **Stacking ensemble**: Combine predictions from all three approaches with a meta-learner.
+4. **Residual analysis**: Map residuals spatially; if clustered, it indicates missing spatial variables.
+5. **Per-target method selection**: let each target pick its own best approach based on CV.
 """
 
 print(analysis_text)
@@ -472,11 +483,11 @@ preds_comp = {
     'approach1': predictions_approach1_test,
     'approach2': predictions_approach2_test,
     'approach3': predictions_approach3_test,
-    'y_test': {c: y_test[c].tolist() for c in y_test.columns if c != 'CaCO3'},
-    'approach1_CaCO3': pred_caco3.tolist(),
-    'approach2_CaCO3': pred_caco3_2.tolist(),
-    'approach3_CaCO3': pred_caco3_3.tolist(),
-    'y_test_CaCO3': y_caco3_test.tolist()
+    'approach1_caco3': pred_caco3.tolist(),
+    'approach2_caco3': pred_caco3_2.tolist(),
+    'approach3_caco3': pred_caco3_3.tolist(),
+    'y_test': {c: y_test[c].tolist() for c in targets_without_caco3},
+    'y_test_caco3': y_caco3_test.tolist()
 }
 with open(artifacts_dir / 'predictions_compare.json', 'w') as f:
     json.dump(preds_comp, f, indent=2)
@@ -498,10 +509,9 @@ Dataset: {len(df)} samples, {X_complete.shape[1]} features
 Split: {len(X_train)} train / {len(X_test)} test; CaCO3 {len(X_caco3_train)}/{len(X_caco3_test)}
 
 Key findings:
-- Best targets: pH, CaCO3 (R² up to ~0.3-0.5)
-- Hardest: EC (R² negative for all approaches)
-- Optimal approach: Mixture-of-Experts (Approach 2) for pH; PCA_GBDT (Approach 1) for CaCO3, N, OC, P, K
-- External enrichment (Approach 3) underperformed due to synthetic features, but shows promise with real data.
+- Best targets: pH (R² up to 0.312), CaCO3 (R² up to 0.523)
+- Hardest: EC (R² negative for all), N/OC negative in several approaches
+- Optimal approach: Mixture-of Experts for pH; PCA_GBDT for CaCO3, N, OC, P, K; hybrids underperformed due to synthetic features.
 
-Honest analysis included. See analysis.md for detailed failure modes and improvement roadmap.
+Honest analysis included in modeling_analysis.md.
 """)
