@@ -8,13 +8,6 @@ Date: 2026-03-25
 import pandas as pd
 import numpy as np
 from pathlib import Path
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-from sklearn.impute import SimpleImputer
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -55,7 +48,6 @@ for col in df.columns:
 
 print(f"   After selection & conversion: {df.shape}")
 
-# Missing analysis
 print("\n2. Missing value analysis:")
 for col in TARGET_COLS:
     missing_pct = df[col].isna().mean() * 100
@@ -73,6 +65,7 @@ print(f"   Samples with CaCO3 available: {len(df_caco3)}")
 X_emb = df[EMBEDDING_COLS].copy()
 X_geo = df[GEO_COLS].copy()
 
+from sklearn.impute import SimpleImputer
 emb_imputer = SimpleImputer(strategy='median')
 X_emb_imputed = pd.DataFrame(
     emb_imputer.fit_transform(X_emb),
@@ -101,10 +94,9 @@ X_train, X_test, y_train, y_test = train_test_split(
     X_complete, y_complete, test_size=TEST_SIZE, random_state=RANDOM_STATE
 )
 
-# CaCO3 split carefully
 caco3_idx = df_caco3.index
 X_caco3 = X_full.loc[caco3_idx]
-y_caco3_filtered = y_caco3.loc[caco3_idx]  # align indices
+y_caco3_filtered = y_caco3.loc[caco3_idx]
 
 X_caco3_train, X_caco3_test, y_caco3_train, y_caco3_test = train_test_split(
     X_caco3, y_caco3_filtered, test_size=TEST_SIZE, random_state=RANDOM_STATE
@@ -117,6 +109,10 @@ print(f"   CaCO3 train: {len(X_caco3_train)}, test: {len(X_caco3_test)}")
 print("\n" + "="*80)
 print("APPROACH 1: PCA-Reduced Gradient Boosting")
 print("="*80)
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train[EMBEDDING_COLS])
@@ -185,7 +181,7 @@ for target in targets_without_caco3:
     }
 results_approach1['metrics']['CaCO3'] = {'R2': r2_ca, 'RMSE': rmse_ca, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3)}
 results_approach1['models'] = models_approach1
-results_approach1['predictions_test'] = predictions_approach1_test
+results_approach1['predictions_test'] = {k: v.tolist() for k, v in predictions_approach1_test.items()}
 
 print("\n   Approach 1 complete.")
 
@@ -256,7 +252,7 @@ for target in targets_without_caco3:
     }
 results_approach2['metrics']['CaCO3'] = {'R2': r2_ca2, 'RMSE': rmse_ca2, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3_2)}
 results_approach2['models'] = models_approach2
-results_approach2['predictions_test'] = predictions_approach2_test
+results_approach2['predictions_test'] = {k: v.tolist() for k, v in predictions_approach2_test.items()}
 results_approach2['selected_features'] = selected_features_per_target
 
 print("\n   Approach 2 complete.")
@@ -340,7 +336,7 @@ for target in targets_without_caco3:
     }
 results_approach3['metrics']['CaCO3'] = {'R2': r2_ca3, 'RMSE': rmse_ca3, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3_3)}
 results_approach3['models'] = models_approach3
-results_approach3['predictions_test'] = predictions_approach3_test
+results_approach3['predictions_test'] = {k: v.tolist() for k, v in predictions_approach3_test.items()}
 results_approach3['selected_features'] = selected_features_per_target_rich
 
 print("\n   Approach 3 complete.")
@@ -383,7 +379,7 @@ analysis_text = """
 **Why:** PCA is unsupervised. It discards dimensions that don't contribute much to total variance, even if they are predictive of a specific target.
 
 **Improvements:**
-- Supervised PCA (e.g., PLS,CCA) or target-specific feature selection instead of global PCA.
+- Supervised PCA (e.g., PLS, CCA) or target-specific feature selection instead of global PCA.
 - Hybrid: use first few PCs (common factors) plus a handful of individually selected raw embeddings.
 
 ### Approach 2 (Target-Specific Mixture-of-Experts)
@@ -502,10 +498,10 @@ Dataset: {len(df)} samples, {X_complete.shape[1]} features
 Split: {len(X_train)} train / {len(X_test)} test; CaCO3 {len(X_caco3_train)}/{len(X_caco3_test)}
 
 Key findings:
-- Best targets: pH, CaCO3 (R² up to ~0.4-0.5 with Approach 2)
-- Hardest: EC (R² ~0)
-- Optimal approach: Mixture-of-Experts (Approach 2) for moderate-signal targets
-- External geospatial enrichment (Approach 3) shows potential but needs real data.
+- Best targets: pH, CaCO3 (R² up to ~0.3-0.5)
+- Hardest: EC (R² negative for all approaches)
+- Optimal approach: Mixture-of-Experts (Approach 2) for pH; PCA_GBDT (Approach 1) for CaCO3, N, OC, P, K
+- External enrichment (Approach 3) underperformed due to synthetic features, but shows promise with real data.
 
 Honest analysis included. See analysis.md for detailed failure modes and improvement roadmap.
 """)
