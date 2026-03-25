@@ -156,7 +156,7 @@ for target in targets_without_caco3:
     model.fit(X_train_pca_plus_geo, y_train[target])
     models_approach1[target] = model
     pred = model.predict(X_test_pca_plus_geo)
-    predictions_approach1_test[target] = pred
+    predictions_approach1_test[target] = pred.tolist()  # ensure list
     r2 = r2_score(y_test[target], pred)
     rmse = np.sqrt(mean_squared_error(y_test[target], pred))
     print(f"R²={r2:.3f}, RMSE={rmse:.3f}")
@@ -185,7 +185,7 @@ for target in targets_without_caco3:
     }
 results_approach1['metrics']['CaCO3'] = {'R2': r2_ca, 'RMSE': rmse_ca, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3)}
 results_approach1['models'] = models_approach1
-results_approach1['predictions_test'] = {k: v.tolist() for k, v in predictions_approach1_test.items()}
+results_approach1['predictions_test'] = predictions_approach1_test
 results_approach1['predictions_caco3'] = pred_caco3.tolist()
 
 print("\n   Approach 1 complete.")
@@ -230,7 +230,7 @@ for target in targets_without_caco3:
     model.fit(X_tr, y_train[target])
     models_approach2[target] = model
     pred = model.predict(X_te)
-    predictions_approach2_test[target] = pred
+    predictions_approach2_test[target] = pred.tolist()  # ensure list
     r2 = r2_score(y_test[target], pred)
     rmse = np.sqrt(mean_squared_error(y_test[target], pred))
     print(f"     {target}: R²={r2:.3f}, RMSE={rmse:.3f}  ({len(sel_feats)} feats)")
@@ -255,7 +255,7 @@ for target in targets_without_caco3:
     }
 results_approach2['metrics']['CaCO3'] = {'R2': r2_ca2, 'RMSE': rmse_ca2, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3_2)}
 results_approach2['models'] = models_approach2
-results_approach2['predictions_test'] = {k: v.tolist() for k, v in predictions_approach2_test.items()}
+results_approach2['predictions_test'] = predictions_approach2_test
 results_approach2['predictions_caco3'] = pred_caco3_2.tolist()
 results_approach2['selected_features'] = selected_features_per_target
 
@@ -301,7 +301,7 @@ caco3_mi_series_rich = pd.Series(caco3_mi_rich, index=X_caco3_train_rich.columns
 caco3_combined_rank_rich = (caco3_corr_rich.rank(ascending=False) + caco3_mi_series_rich.rank(ascending=False)) / 2
 caco3_selected_rich = caco3_combined_rank_rich.nsmallest(top_k).index.tolist()
 selected_features_per_target_rich['CaCO3'] = caco3_selected_rich
-print(f"   CaCO3: top5 = {', '.join(caco3_selected_rich[:5])}")
+print(f"   CaCO3: top5 = {', '.join(cacao3_selected_rich[:5])}")
 
 print("\n   Training enriched models...")
 models_approach3 = {}
@@ -315,7 +315,7 @@ for target in targets_without_caco3:
     model.fit(X_tr, y_train[target])
     models_approach3[target] = model
     pred = model.predict(X_te)
-    predictions_approach3_test[target] = pred
+    predictions_approach3_test[target] = pred.tolist()  # ensure list
     r2 = r2_score(y_test[target], pred)
     rmse = np.sqrt(mean_squared_error(y_test[target], pred))
     print(f"     {target}: R²={r2:.3f}, RMSE={rmse:.3f}  ({len(sel_feats)} feats)")
@@ -340,7 +340,7 @@ for target in targets_without_caco3:
     }
 results_approach3['metrics']['CaCO3'] = {'R2': r2_ca3, 'RMSE': rmse_ca3, 'MAE': mean_absolute_error(y_caco3_test, pred_caco3_3)}
 results_approach3['models'] = models_approach3
-results_approach3['predictions_test'] = {k: v.tolist() for k, v in predictions_approach3_test.items()}
+results_approach3['predictions_test'] = predictions_approach3_test
 results_approach3['predictions_caco3'] = pred_caco3_3.tolist()
 results_approach3['selected_features'] = selected_features_per_target_rich
 
@@ -478,7 +478,7 @@ with open(artifacts_dir / 'approach3_selected_features.json', 'w') as f:
     json.dump(selected_features_per_target_rich, f, indent=2)
 joblib.dump(caco3_model3, artifacts_dir / 'approach3_CaCO3_model.pkl')
 
-# Predictions & metrics
+# Predictions & metrics — ensure everything is list/dict/POD
 preds_comp = {
     'approach1': predictions_approach1_test,
     'approach2': predictions_approach2_test,
@@ -487,7 +487,7 @@ preds_comp = {
     'approach2_caco3': pred_caco3_2.tolist(),
     'approach3_caco3': pred_caco3_3.tolist(),
     'y_test': {c: y_test[c].tolist() for c in targets_without_caco3},
-    'y_test_caco3': y_caco3_test.tolist()
+    'y_test_caco3': y_caco3_test.values.tolist()
 }
 with open(artifacts_dir / 'predictions_compare.json', 'w') as f:
     json.dump(preds_comp, f, indent=2)
@@ -511,7 +511,7 @@ Split: {len(X_train)} train / {len(X_test)} test; CaCO3 {len(X_caco3_train)}/{le
 Key findings:
 - Best targets: pH (R² up to 0.312), CaCO3 (R² up to 0.523)
 - Hardest: EC (R² negative for all), N/OC negative in several approaches
-- Optimal approach: Mixture-of Experts for pH; PCA_GBDT for CaCO3, N, OC, P, K; hybrids underperformed due to synthetic features.
+- Optimal approach: Mixture-of-Experts for pH; PCA_GBDT for CaCO3, N, OC, P, K; hybrids underperformed due to synthetic features.
 
 Honest analysis included in modeling_analysis.md.
 """)
