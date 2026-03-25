@@ -1,41 +1,55 @@
-"""Data loading and preprocessing for LUCAS soil dataset."""
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
 
-embedding_cols = [f'A{i:02d}' for i in range(64)] + ['A63']
-geospatial_cols = ['TH_LAT', 'TH_LONG', 'Elev']
-target_cols = ['pH_CaCl2', 'pH_H2O', 'EC', 'OC', 'P', 'N', 'K', 'CaCO3']
-
-def load_data(csv_path):
-    """Load raw CSV and return cleaned DataFrame."""
-    df = pd.read_csv(csv_path)
-    # Select relevant columns
-    cols_needed = embedding_cols + geospatial_cols + target_cols
-    df = df[cols_needed].copy()
-    # Replace '< LOD' with NaN and convert to numeric
-    for col in target_cols:
-        df[col] = pd.to_numeric(df[col].replace('< LOD', np.nan), errors='coerce')
+def load_lucas_dataset(path):
+    """
+    Load LUCAS soil dataset with AlphaEarth embeddings.
+    Returns: DataFrame (n_samples, n_features)
+    """
+    df = pd.read_csv(path, low_memory=False)
+    # Basic cleaning: strip column names, drop empty columns
+    df.columns = df.columns.str.strip()
+    df = df.dropna(axis=1, how='all')
     return df
 
-def prepare_X_y(df):
-    """Extract feature matrix X (embeddings + geospatial) and target matrix y."""
-    X_emb = df[embedding_cols].values
-    X_geo = df[geospatial_cols].values
-    X = np.hstack([X_emb, X_geo])
-    y = df[target_cols].values
-    return X, y, target_cols
+def extract_targets(df):
+    """
+    Extract nutrient targets: pH_CaCl2, pH_H2O, EC, OC, P, K, CaCO3.
+    Returns: target DataFrame
+    """
+    target_cols = ['pH_CaCl2', 'pH_H2O', 'EC', 'OC', 'P', 'K', 'CaCO3']
+    # Some columns might have variations; keep only existing ones
+    existing = [c for c in target_cols if c in df.columns]
+    return df[existing].copy()
 
-def impute_targets(y):
-    """Median imputation for missing target values."""
-    from sklearn.impute import SimpleImputer
-    imp = SimpleImputer(strategy='median')
-    y_imp = imp.fit_transform(y)
-    return y_imp, imp
+def extract_features(df, target_cols):
+    """
+    Separate feature matrix (embeddings + geospatial) from targets.
+    Embeds: columns named A00-A62 (63 dims). Geospatial: lat, lon, elevation, etc.
+    """
+    # Identify embedding columns: A00 through A62
+    embed_cols = [c for c in df.columns if c.startswith('A') and c[1:].isdigit()]
+    # Geospatial: any non-target numeric columns that are not embeddings
+    exclude = set(target_cols) | set(embed_cols) | {'ID', 'PointID', 'SampleID'}
+    geo_cols = [c for c in df.columns if c not in exclude and pd.api.types.is_numeric_dtype(df[c])]
+    feature_df = df[embed_cols + geo_cols].copy()
+    return feature_df, embed_cols, geo_cols
 
-def split_data(X, y, test_size=0.2, random_state=42):
-    """Stratified-like split preserving class balance (none, just random split)."""
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state
-    )
-    return X_train, X_test, y_train, y_test
+def prepare_clean_data(df):
+    """
+    Wrangle dataset:
+    - Convert non-numeric to NaN where needed
+    - Handle '< LOD' as NaN but track missingness
+    - Ensure all feature columns numeric
+    Returns: X (features), y (targets), embed_cols, geo_cols
+    """
+    df = df.copy()
+    # Convert any non-numeric strings to NaN across dataframe
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    target_cols = ['pH_CaCl2', 'pH_H2O', 'EC', 'OC', 'P', 'K', 'CaCO3']
+    y = extract_targets(df)
+    X, embed_cols, geo_cols = extract_features(df, target_cols)
+    # Ensure no NaNs in X (could impute later)
+    return X, y, embed_cols, geo_cols
