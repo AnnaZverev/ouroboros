@@ -1,3 +1,4 @@
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import cross_val_score, KFold
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
