@@ -1,73 +1,94 @@
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import cross_val_score, KFold
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-import lightgbm as lgb
-import numpy as np
+"""Approach 1: Embeddings-Only XGBoost Baseline."""
+
 import pandas as pd
+import numpy as np
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.metrics import r2_score
+import xgboost as xgb
+import pickle
+from pathlib import Path
 
-def train_pca_gbdt(X, y, n_components=0.95, random_state=42):
-    """
-    Approach 1: PCA on embeddings + GBDT.
-    - Standardize features
-    - PCA on embedding subset (preserve variance)
-    - Concatenate PCA components + geospatial features
-    - Train LightGBM regression
-    Returns: trained model, metrics dict, feature_names
-    """
-    X_emb = X.filter(like='A')
-    X_geo = X.drop(columns=X_emb.columns)
-    
-    scaler = StandardScaler()
-    X_emb_scaled = scaler.fit_transform(X_emb)
-    
-    pca = PCA(n_components=n_components, random_state=random_state)
-    X_pca = pca.fit_transform(X_emb_scaled)
-    pca_feature_names = [f'PC{i+1}' for i in range(X_pca.shape[1])]
-    
-    # Combine
-    X_combined = np.hstack([X_pca, X_geo.values])
-    combined_feature_names = pca_feature_names + list(X_geo.columns)
-    
-    model = lgb.LGBMRegressor(
-        n_estimators=200,
-        learning_rate=0.05,
-        max_depth=7,
-        num_leaves=31,
-        random_state=random_state,
-        n_jobs=-1
-    )
-    
-    # Cross-validation for each target
-    metrics = {}
-    for target in y.columns:
-        y_target = y[target].dropna()
-        if y_target.empty:
-            continue
-        # Align indexes
-        common_idx = y_target.index.intersection(pd.DataFrame(X_combined, index=X.index).index)
-        X_target = pd.DataFrame(X_combined, index=X.index).loc[common_idx]
-        y_target = y_target.loc[common_idx]
-        
-        cv = KFold(n_splits=5, shuffle=True, random_state=random_state)
-        r2_scores = cross_val_score(model, X_target, y_target, cv=cv, scoring='r2', n_jobs=-1)
-        model.fit(X_target, y_target)
-        pred = model.predict(X_target)
-        metrics[target] = {
-            'r2_cv_mean': r2_scores.mean(),
-            'r2_cv_std': r2_scores.std(),
-            'rmse': np.sqrt(mean_squared_error(y_target, pred)),
-            'mae': mean_absolute_error(y_target, pred),
-            'n_features': X_target.shape[1],
-            'approach': 'PCA+GBDT'
+
+class Approach1_EmbeddingsOnly:
+    """Predict nutrients using only AlphaEarth embeddings with XGBoost."""
+
+    def __init__(self, n_estimators=200, max_depth=5, random_state=42):
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.random_state = random_state
+        self.models = {}
+        self.scaler = None
+
+    def run(self, X, y):
+        """
+        Run cross-validated training for all nutrients.
+
+        Args:
+            X: DataFrame of embedding features (A0-A62)
+            y: DataFrame of target nutrients
+
+        Returns:
+            results dictionary
+        """
+        n_samples = len(X)
+        n_features = X.shape[1]
+
+        # Standardize embeddings (though XGBoost is insensitive, helps consistency)
+        from sklearn.preprocessing import StandardScaler
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X)
+
+        # CV setup
+        cv = KFold(n_splits=5, shuffle=True, random_state=self.random_state)
+
+        nutrient_r2 = {}
+        all_scores = []
+
+        for nutrient in y.columns:
+            y_target = y[nutrient].values
+
+            # Train XGBoost with CV
+            model = xgb.XGBRegressor(
+                n_estimators=self.n_estimators,
+                max_depth=self.max_depth,
+                random_state=self.random_state,
+                n_jobs=-1
+            )
+
+            # Cross-validate
+            cv_scores = cross_val_score(model, X_scaled, y_target,
+                                        cv=cv, scoring='r2', n_jobs=-1)
+            all_scores.extend(cv_scores)
+
+            # Fit on all data for final model
+            model.fit(X_scaled, y_target)
+            self.models[nutrient] = model
+
+            nutrient_r2[nutrient] = cv_scores.mean()
+
+        results = {
+            'n_samples': n_samples,
+            'n_features': n_features,
+            'cv_scores_all': all_scores,
+            'cv_scores_mean': np.mean(all_scores),
+            'cv_scores_std': np.std(all_scores),
+            'nutrient_r2': nutrient_r2,
+            'models': self.models,
+            'scaler': self.scaler
         }
-    return model, pca, scaler, metrics, combined_feature_names
 
-def predict_pca_gbdt(model, pca, scaler, X_new, X_geo_columns):
-    """Predict using trained PCA+GBDT pipeline."""
-    X_emb = X_new.filter(like='A')
-    X_geo = X_new[X_geo_columns]
-    X_emb_scaled = scaler.transform(X_emb)
-    X_pca = pca.transform(X_emb_scaled)
-    X_combined = np.hstack([X_pca, X_geo.values])
-    return model.predict(X_combined)
+        return results
+
+    def save_results(self, path):
+        """Save trained models and results to disk."""
+        save_dict = {
+            'models': self.models,
+            'scaler': self.scaler
+        }
+        with open(path, 'wb') as f:
+            pickle.dump(save_dict, f)
+
+
+if __name__ == '__main__':
+    # Quick test
+    print("Approach1 module loaded successfully.")
