@@ -98,7 +98,7 @@ def write_analysis_report(comp_df, X, y, embed_cols, geo_cols, pca, corr_matrix,
             continue
         best_approach = None
         best_r2 = -np.inf
-        for approach in ['PCA+GBDT', 'MixtureOfExperts', 'HybridEnhanced']:
+        for approach, metrics in [('PCA+GBDT', metrics1), ('MixtureOfExperts', res2['metrics']), ('HybridEnhanced', metrics3)]:
             col = f'{approach}_R2'
             if col in comp_df.columns and pd.notnull(comp_df.loc[comp_df['Target']==target, col].values[0]):
                 r2 = comp_df.loc[comp_df['Target']==target, col].values[0]
@@ -161,7 +161,7 @@ def write_analysis_report(comp_df, X, y, embed_cols, geo_cols, pca, corr_matrix,
     lines.append("With richer features and spatial validation, the same models could reach R² > 0.5 for most nutrients. Without feature expansion, further tuning is futile.")
     lines.append("")
     lines.append(f"*Generated {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}*")
-    ]
+    )
     
     with open(report_path, 'w') as f:
         f.write('\n'.join(lines))
